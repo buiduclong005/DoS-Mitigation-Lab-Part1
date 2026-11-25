@@ -1,87 +1,92 @@
-ANM - Kiểm thử HTTP chậm trên Nginx trước khi áp dụng biện pháp phòng chống DoS
-# DoS Mitigation Lab - Part 1
+# DoS Mitigation Lab
 
-## 1. Giới thiệu đề tài
-Đồ án môn An Ninh Mạng: Nghiên cứu cơ chế DoS Slowloris và biện pháp phòng chống trên máy chủ Nginx.
+Lab mô phỏng việc bảo vệ một web server (nginx) trước tấn công từ chối dịch vụ dạng **Slowloris**, bằng cách giám sát real-time với Netdata và áp dụng cấu hình giảm thiểu (mitigation) ở tầng nginx.
 
-## 2. Mục tiêu
-- Xây dựng môi trường thực nghiệm trên VMware.
-- Cài đặt và cấu hình Ubuntu Server.
-- Triển khai Nginx Web Server.
-- Cài đặt Netdata để giám sát hệ thống.
-- Quan sát kết nối HTTP chưa hoàn chỉnh.
-- Thu thập minh chứng trước khi áp dụng biện pháp phòng chống.
+## Mục tiêu
 
-## 3. Môi trường thực nghiệm
+- Dựng một môi trường server mục tiêu (nginx) trong máy ảo cô lập.
+- Giám sát số lượng kết nối TCP theo thời gian thực bằng Netdata.
+- Áp dụng cấu hình chống chịu tấn công Slowloris (giới hạn kết nối theo IP, rút ngắn timeout).
+- Kiểm thử để xác nhận server vẫn phục vụ người dùng hợp lệ bình thường sau khi áp dụng mitigation.
 
-| Thành phần | Thông tin |
+## Kiến trúc lab
+
+| Thành phần | Mô tả |
 |---|---|
-| Phần mềm ảo hóa | VMware Workstation |
-| Hệ điều hành | Ubuntu Server 24.04.5 LTS |
-| Tên máy chủ | dos-lab-server |
-| RAM | 6 GB |
-| CPU | 2 vCPU |
-| Ổ cứng | 20 GB |
-| Web Server | Nginx 1.24.0 |
-| Công cụ giám sát | Netdata 2.13.0 |
-| Ngôn ngữ kiểm thử | Python 3.12.3 |
+| Hypervisor | VMware Workstation Pro |
+| Máy ảo mục tiêu | Ubuntu Server 24.04 LTS |
+| Web server | nginx 1.28.3 |
+| Công cụ giám sát | Netdata |
+| Mạng | Host-only (cô lập, không ra Internet) |
 
-## 4. Cấu hình mạng
+## Cài đặt môi trường
 
-| Card mạng | Chế độ | Địa chỉ IP |
-|---|---|---|
-| ens33 | NAT | 192.168.15.128/24 |
-| ens37 | Host-only | 192.168.124.128/24 |
-| VMnet1 | Windows Host | 192.168.124.1/24 |
+### 1. Cài nginx
 
-Card NAT được ngắt trong quá trình kiểm thử nhằm cô lập môi trường thực nghiệm.
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y nginx
+```
 
-## 5. Nội dung thực hiện
-- Cài đặt hệ điều hành và các công cụ cơ bản.
-- Cài đặt OpenSSH Server.
-- Cài đặt và kiểm tra Nginx.
-- Cấu hình hai card mạng.
-- Cài đặt Netdata.
-- Thu thập thông số hệ thống ở trạng thái bình thường.
-- Thực hiện kiểm thử HTTP giới hạn trong môi trường nội bộ.
-- Ghi nhận kết quả và kiểm tra khả năng phản hồi của máy chủ.
+### 2. Cài Netdata
 
-## 6. Kết quả thực nghiệm
+```bash
+sudo bash -c "$(curl -SsL https://my-netdata.io/kickstart.sh)"
+```
 
-| Nội dung | Kết quả |
+Truy cập dashboard giám sát tại: `http://<IP-server>:19999`
+
+## Cấu hình chống DoS (Slowloris Mitigation)
+
+File cấu hình: [`nginx-dos-mitigation.conf`](./nginx-dos-mitigation.conf), được đặt tại `/etc/nginx/conf.d/dos-mitigation.conf` trên server.
+
+```nginx
+limit_conn_zone $binary_remote_addr zone=addr:10m;
+client_header_timeout 5s;
+client_body_timeout 5s;
+send_timeout 5s;
+keepalive_timeout 5;
+limit_conn addr 10;
+```
+
+**Giải thích:**
+
+| Directive | Vai trò |
 |---|---|
-| Nginx | Hoạt động bình thường |
-| SSH | Active (running) |
-| Netdata | Active (running) |
-| CPU trước kiểm thử | Khoảng 2.27% |
-| RAM trước kiểm thử | Khoảng 8.29% |
-| TCP trước kiểm thử | 6 kết nối tại thời điểm chụp Dashboard |
-| Kết nối HTTP kiểm thử | 8 kết nối |
-| Thời gian kiểm thử | 20 giây |
-| Phản hồi HTTP sau kiểm thử | 200 OK |
+| `limit_conn_zone` | Khai báo vùng nhớ lưu số kết nối hiện tại theo từng IP |
+| `client_header_timeout` | Đóng kết nối nếu client không gửi xong HTTP header trong 5 giây — chặn kiểu Slowloris gửi header rất chậm |
+| `client_body_timeout` | Đóng kết nối nếu client không gửi xong phần body trong 5 giây |
+| `send_timeout` | Giới hạn thời gian server chờ gửi response |
+| `keepalive_timeout` | Rút ngắn thời gian giữ kết nối keep-alive, giảm số kết nối "treo" |
+| `limit_conn addr 10` | Mỗi địa chỉ IP chỉ được tối đa 10 kết nối đồng thời — ngăn 1 nguồn chiếm hết connection pool |
 
-Kết quả cho thấy số kết nối TCP tăng trong quá trình kiểm thử và giảm sau khi chương trình kết thúc. Máy chủ vẫn phản hồi HTTP bình thường sau kiểm thử.
+### Áp dụng cấu hình
 
-File tcp-before.csv hiện chứa dữ liệu đo khi chương trình kiểm thử không hoạt động. Kết quả trong quá trình kiểm thử được minh chứng bằng ảnh terminal và biểu đồ Netdata.
+```bash
+sudo nginx -t                    # kiểm tra cú pháp
+sudo systemctl reload nginx      # áp dụng không gián đoạn dịch vụ
+```
 
-## 7. Cấu trúc repository
+## Kiểm thử sau khi áp dụng mitigation
 
-- config/: Các file cấu hình.
-- evidence/: Dữ liệu và kết quả kiểm tra.
-- screenshots/: Hình ảnh minh chứng thực nghiệm.
-- README.md: Tài liệu mô tả đồ án.
+Gửi 15 request tuần tự để xác nhận server vẫn phục vụ người dùng hợp lệ bình thường:
 
-## 8. Phạm vi và an toàn
-Bài thực nghiệm chỉ được thực hiện trong môi trường lab cô lập, với số lượng kết nối giới hạn, nhằm minh họa cơ chế HTTP chậm, không nhằm làm gián đoạn dịch vụ thực tế.
+```bash
+for i in $(seq 1 15); do curl -s -o /dev/null -w "Request $i : %{http_code}\n" http://localhost; done
+```
 
-## 9. Tài liệu tham khảo
-- https://github.com/MervJB7/DoS-Mitigation-Lab
-- https://nginx.org/en/docs/
-- https://learn.netdata.cloud/
-- https://documentation.ubuntu.com/server/
+**Kết quả:** 15/15 request trả về mã `200 OK` — xác nhận cấu hình mitigation không ảnh hưởng tới truy cập hợp lệ thông thường, trong khi về mặt kỹ thuật vẫn giới hạn được số kết nối treo (slow/hanging connections) kiểu Slowloris.
 
-## 10. Hướng phát triển phần 2
-- Áp dụng cấu hình phòng chống DoS trên Nginx.
-- Kiểm tra khả năng phản hồi của máy chủ.
-- Đồng bộ điều kiện kiểm thử.
-- So sánh kết quả trước và sau khi áp dụng biện pháp phòng chống.
+![Kết quả test](./screenshots/test-results.png)
+![Netdata monitoring](./screenshots/netdata-dashboard.png)
+
+## Kết luận
+
+Việc kết hợp giới hạn kết nối theo IP (`limit_conn`) và rút ngắn các timeout liên quan đến việc nhận dữ liệu từ client là phương án hiệu quả, nhẹ, không cần công cụ bên thứ ba để giảm thiểu tấn công Slowloris trên nginx. Giám sát bằng Netdata giúp quan sát trực quan số lượng kết nối theo thời gian thực, hỗ trợ phát hiện sớm các dấu hiệu bất thường.
+
+## Thành viên thực hiện
+
+| Thành viên | Nhiệm vụ |
+|---|---|
+| (Điền tên) | Tạo môi trường demo, cài máy chủ, đưa mã nguồn lên GitHub, viết README |
+| (Điền tên) | Thiết lập MFA, tạo tài khoản/nhóm/phân quyền, chạy test case, viết phần kết quả demo |
