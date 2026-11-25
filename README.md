@@ -4,7 +4,7 @@ ANM - Kiểm thử HTTP chậm trên Nginx trước khi áp dụng biện pháp 
 ## 1. Giới thiệu đề tài
 Đồ án môn An Ninh Mạng: Nghiên cứu cơ chế DoS Slowloris và biện pháp phòng chống trên máy chủ Nginx.
 
-## 2. Mục tiêu phần 1
+## 2. Mục tiêu
 - Xây dựng môi trường thực nghiệm trên VMware.
 - Cài đặt và cấu hình Ubuntu Server.
 - Triển khai Nginx Web Server.
